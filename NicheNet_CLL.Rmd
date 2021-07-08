@@ -1,0 +1,340 @@
+---
+title: "NicheNet_CLL"
+author: "Sophie Kogut"
+date: "5/12/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load}
+# With data
+# Load required packages, NicheNet’s ligand-target prior model and processed expression data of interacting cells
+library(nichenetr)
+library(tidyverse)
+library(edgeR)
+library(dplyr)
+library(data.table)
+
+ligand_target_matrix =  readRDS(url("https://zenodo.org/record/3260758/files/ligand_target_matrix.rds"))
+ligand_target_matrix[1:5,1:5] # target genes in rows, ligands in columns
+
+```
+
+```{r data: TRIAL 1}
+# data
+#attached is the CLL and stromal count data. I don’t have a target metafile for each sample, but information is available in the GEO metatables. These datasets have more treatments, either with WT stroma or Prkcb-/- stroma, or inhibitors in the CLL. I can help to navigate the datasets if you have any questions, but perhaps we can just stick to non-treated and WT stroma to begin with. Thanks!
+# separate into expression and meta data
+# sender cells
+cll_exp<- read.table("CLL/cll_rawcounts.matrix.txt", sep= "\t")
+colnames(cll_exp) <- cll_exp[1,]
+rownames(cll_exp) <- cll_exp[,1]
+cll_exp<- cll_exp[-1,-1]
+cll_exp<- data.matrix(cll_exp, rownames.force = NA)
+# select WT no treat samples
+# redo: this time the CLL is the RECEIVER
+cll_samples<- colnames(cll_exp)
+cll_samples<- cll_samples[grep("WT_noTreat", cll_samples)]
+cll_exp<- cll_exp[, cll_samples]
+
+# receiver cells
+# library(biomaRt)
+# musGenes <- read.table("CLL/mart_export.txt")
+# # Basic function to convert mouse to human gene names
+# convertMouseGeneList <- function(x){
+# require("biomaRt")
+# human = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+# mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+# genesV2 = getLDS(attributes = c("mgi_symbol"), filters = "mgi_symbol", values = x , mart = mouse, attributesL = c("hgnc_symbol"), martL = human, uniqueRows=T)
+# humanx <- unique(genesV2[, 2])
+# # Print the first 6 genes found to the screen
+# print(head(humanx))
+# return(humanx)
+# }
+# genes <- convertMouseGeneList(musGenes)
+
+stroma_exp<- read.table("CLL/stroma_rawcounts.matrix.txt", sep= "\t")
+colnames(stroma_exp) <- stroma_exp[1,]
+which(stroma_exp[,1] == "SETD1A")
+stroma_exp<- stroma_exp[-45450,]
+row.names(stroma_exp)<- toupper(stroma_exp[,1])
+stroma_exp<- stroma_exp[-1,-1]
+stroma_exp<- data.matrix(stroma_exp, rownames.force = NA)
+# select WT no treat samples
+stroma_samples<- colnames(stroma_exp)
+# stroma_samples<- stroma_samples[grep("WTonly", stroma_samples)]
+# select co cultured
+ stroma_samples<- stroma_samples[grep("WTCLL", stroma_samples)]
+stroma_exp<- stroma_exp[, stroma_samples]
+
+```
+
+```{r TRIAL 2}
+# TRIAL 2 with CLL co cultured with KO as the receiver
+# CLL cells = receiver = KO no treat
+# stromal cells = sender = KO CLL
+cll_exp<- read.table("CLL/cll_rawcounts.matrix.txt", sep= "\t")
+colnames(cll_exp) <- cll_exp[1,]
+rownames(cll_exp) <- cll_exp[,1]
+cll_exp<- cll_exp[-1,-1]
+cll_exp<- data.matrix(cll_exp, rownames.force = NA)
+# select WT no treat samples
+# redo: this time the CLL is the RECEIVER
+cll_samples<- colnames(cll_exp)
+cll_samples<- cll_samples[grep("KO_noTreat", cll_samples)]
+cll_exp<- cll_exp[, cll_samples]
+
+# sender cells
+stroma_exp<- read.table("CLL/stroma_rawcounts.matrix.txt", sep= "\t")
+colnames(stroma_exp) <- stroma_exp[1,]
+which(stroma_exp[,1] == "SETD1A")
+stroma_exp<- stroma_exp[-45450,]
+row.names(stroma_exp)<- toupper(stroma_exp[,1])
+stroma_exp<- stroma_exp[-1,-1]
+stroma_exp<- data.matrix(stroma_exp, rownames.force = NA)
+# select WT no treat samples
+stroma_samples<- colnames(stroma_exp)
+# stroma_samples<- stroma_samples[grep("WTonly", stroma_samples)]
+# select co cultured
+ stroma_samples<- stroma_samples[grep("KOCLL", stroma_samples)]
+stroma_exp<- stroma_exp[, stroma_samples]
+
+
+```
+
+```{r step 1}
+# Define expressed genes in sender and receiver cell populations
+# sender = CLL
+# receiver = co-cultured stroma
+
+#expressed_genes_sender <- filterByExpr(cll_exp, min.count = 50)
+#expressed_genes_receiver <- filterByExpr(stroma_exp)
+
+# round 2: sender = cocultured stroma
+# reciever = CLL only
+# keep <- rowSums(cll_exp) > 75
+# expressed_genes_sender <- cll_exp[keep,]
+# expressed_genes_sender<- row.names(expressed_genes_sender)
+# 
+# keep <- rowSums(stroma_exp) > 75
+# expressed_genes_receiver <- stroma_exp[keep,]
+# expressed_genes_receiver<- row.names(expressed_genes_receiver)
+
+keep <- rowSums(cll_exp) > 75
+expressed_genes_receiver <- cll_exp[keep,]
+expressed_genes_receiver<- row.names(expressed_genes_receiver)
+
+keep <- rowSums(stroma_exp) > 75
+expressed_genes_sender <- stroma_exp[keep,]
+expressed_genes_sender<- row.names(expressed_genes_sender)
+
+# Check the number of expressed genes: should be a 'reasonable' number of total expressed genes in a cell type, e.g. should be in the range of 10000-15000 for bulk rna-seq data
+length(expressed_genes_sender)
+# 25855
+length(expressed_genes_receiver)
+# 18956
+```
+
+```{r step 2}
+# Define the gene set of interest and a background of genes
+library(fgsea)
+geneset_oi<- gmtPathways("CLL/ECM_KEGG.gmt")
+geneset_oi<- geneset_oi[["NABA_ECM_AFFILIATED"]]
+geneset_oi <- geneset_oi[which(geneset_oi[] %in% rownames(ligand_target_matrix))]
+#, col_names = "gene") %>% pull(gene) %>% .[. %in% rownames(ligand_target_matrix)] # only consider genes also present in the NicheNet model - this excludes genes from the gene list for which the official HGNC symbol was not used by Puram et al.
+head(geneset_oi)
+## [1] "SERPINE1" "TGFBI"    "MMP10"    "LAMC2"    "P4HA2"    "PDPN"
+
+background_expressed_genes = expressed_genes_receiver %>% .[. %in% rownames(ligand_target_matrix)]
+head(background_expressed_genes)
+```
+
+```{r step 3}
+# Define a set of potential ligands
+lr_network = readRDS(url("https://zenodo.org/record/3260758/files/lr_network.rds"))
+
+ligands = lr_network %>% pull(from) %>% unique()
+expressed_ligands = intersect(ligands,expressed_genes_sender)
+
+receptors = lr_network %>% pull(to) %>% unique()
+expressed_receptors = intersect(receptors,expressed_genes_receiver)
+
+##### alternative to expressed receptors using all data
+#expressed_receptors = intersect(receptors, rownames(stroma_exp))
+
+lr_network_expressed = lr_network %>% filter(from %in% expressed_ligands & to %in% expressed_receptors) 
+head(lr_network_expressed)
+
+#This ligand-receptor network contains the expressed ligand-receptor interactions. As potentially active ligands for the NicheNet analysis, we will consider the ligands from this network.
+
+potential_ligands = lr_network_expressed %>% pull(from) %>% unique()
+head(potential_ligands)
+## [1] "HGF"     "TNFSF10" "TGFB2"   "TGFB3"   "INHBA"   "CD99"
+```
+
+```{r step 4}
+# Perform NicheNet’s ligand activity analysis on the gene set of interest
+ligand_activities = predict_ligand_activities(geneset = geneset_oi, background_expressed_genes = background_expressed_genes, ligand_target_matrix = ligand_target_matrix, potential_ligands = potential_ligands)
+
+ligand_activities %>% arrange(-pearson) 
+
+best_upstream_ligands = ligand_activities %>% top_n(20, pearson) %>% arrange(-pearson) %>% pull(test_ligand)
+head(best_upstream_ligands)
+
+# show histogram of ligand activity scores
+p_hist_lig_activity = ggplot(ligand_activities, aes(x=pearson)) + 
+  geom_histogram(color="black", fill="darkorange")  + 
+  # geom_density(alpha=.1, fill="orange") +
+  geom_vline(aes(xintercept=min(ligand_activities %>% top_n(20, pearson) %>% pull(pearson))), color="red", linetype="dashed", size=1) + 
+  labs(x="ligand activity (PCC)", y = "# ligands") +
+  theme_classic()
+p_hist_lig_activity
+```
+
+```{r step 5}
+#Infer target genes of top-ranked ligands and visualize in a heatmap
+active_ligand_target_links_df = best_upstream_ligands %>% lapply(get_weighted_ligand_target_links,geneset = geneset_oi, ligand_target_matrix = ligand_target_matrix, n = 250) %>% bind_rows()
+
+nrow(active_ligand_target_links_df)
+## [1] 143
+head(active_ligand_target_links_df)
+
+# to remove NA 
+active_ligand_target_links_df<- na.omit(active_ligand_target_links_df)
+
+active_ligand_target_links = prepare_ligand_target_visualization(ligand_target_df = active_ligand_target_links_df, ligand_target_matrix = ligand_target_matrix, cutoff = 0.25)
+
+nrow(active_ligand_target_links_df)
+## [1] 143
+head(active_ligand_target_links_df)
+
+order_ligands = intersect(best_upstream_ligands, colnames(active_ligand_target_links)) %>% rev()
+order_targets = active_ligand_target_links_df$target %>% unique()
+vis_ligand_target = active_ligand_target_links[,order_ligands]  %>% t()# order_targets
+
+p_ligand_target_network = vis_ligand_target %>% make_heatmap_ggplot("Prioritized KO stromal-ligands","ECM genes in CLL cells", color = "purple",legend_position = "top", x_axis_position = "top",legend_title = "Regulatory potential") + scale_fill_gradient2(low = "whitesmoke",  high = "purple", breaks = c(0,0.005,0.01)) + theme(axis.text.x = element_text(face = "italic"))
+
+p_ligand_target_network
+```
+
+```{r Optional}
+#So, we will now infer the predicted ligand-receptor interactions of the top-ranked ligands and visualize these in a heatmap.
+
+# get the ligand-receptor network of the top-ranked ligands
+lr_network_top = lr_network %>% filter(from %in% best_upstream_ligands & to %in% expressed_receptors) %>% distinct(from,to)
+best_upstream_receptors = lr_network_top %>% pull(to) %>% unique()
+
+# get the weights of the ligand-receptor interactions as used in the NicheNet model
+weighted_networks = readRDS(url("https://zenodo.org/record/3260758/files/weighted_networks.rds"))
+lr_network_top_df = weighted_networks$lr_sig %>% filter(from %in% best_upstream_ligands & to %in% best_upstream_receptors)
+
+# convert to a matrix
+lr_network_top_df = lr_network_top_df %>% spread("from","weight",fill = 0)
+lr_network_top_matrix = lr_network_top_df %>% select(-to) %>% as.matrix() %>% magrittr::set_rownames(lr_network_top_df$to)
+
+# perform hierarchical clustering to order the ligands and receptors
+dist_receptors = dist(lr_network_top_matrix, method = "binary")
+hclust_receptors = hclust(dist_receptors, method = "ward.D2")
+order_receptors = hclust_receptors$labels[hclust_receptors$order]
+
+dist_ligands = dist(lr_network_top_matrix %>% t(), method = "binary")
+hclust_ligands = hclust(dist_ligands, method = "ward.D2")
+order_ligands_receptor = hclust_ligands$labels[hclust_ligands$order]
+#Show a heatmap of the ligand-receptor interactions
+
+vis_ligand_receptor_network = lr_network_top_matrix[order_receptors, order_ligands_receptor]
+p_ligand_receptor_network = vis_ligand_receptor_network %>% t() %>% make_heatmap_ggplot("Prioritized CLL-ligands","Receptors expressed by stromal cells", color = "mediumvioletred", x_axis_position = "top",legend_title = "Prior interaction potential")
+p_ligand_receptor_network
+
+```
+
+```{r}
+# Inferring ligand-to-target signaling paths
+weighted_networks = readRDS(url("https://zenodo.org/record/3260758/files/weighted_networks.rds"))
+ligand_tf_matrix = readRDS(url("https://zenodo.org/record/3260758/files/ligand_tf_matrix.rds"))
+
+lr_network = readRDS(url("https://zenodo.org/record/3260758/files/lr_network.rds"))
+sig_network = readRDS(url("https://zenodo.org/record/3260758/files/signaling_network.rds"))
+gr_network = readRDS(url("https://zenodo.org/record/3260758/files/gr_network.rds"))
+
+print(best_upstream_ligands)
+ligands_all = "IL4" # this can be a list of multiple ligands if required
+lr_network_expressed$to[which(lr_network_expressed$from == "IL4")]
+targets_all = c("IL13RA1", "IL4R",    "IL2RG" )
+
+active_signaling_network = get_ligand_signaling_path(ligand_tf_matrix = ligand_tf_matrix, ligands_all = ligands_all, targets_all = targets_all, weighted_networks = weighted_networks)
+
+# For better visualization of edge weigths: normalize edge weights to make them comparable between signaling and gene regulatory interactions
+active_signaling_network_min_max = active_signaling_network
+active_signaling_network_min_max$sig = active_signaling_network_min_max$sig %>% mutate(weight = ((weight-min(weight))/(max(weight)-min(weight))) + 0.75)
+active_signaling_network_min_max$gr = active_signaling_network_min_max$gr %>% mutate(weight = ((weight-min(weight))/(max(weight)-min(weight))) + 0.75)
+
+graph_min_max = diagrammer_format_signaling_graph(signaling_graph_list = active_signaling_network_min_max, ligands_all = ligands_all, targets_all = targets_all, sig_color = "indianred", gr_color = "steelblue")
+
+# To render the graph: uncomment following line of code
+DiagrammeR::render_graph(graph_min_max, layout = "tree")
+
+data_source_network = infer_supporting_datasources(signaling_graph_list = active_signaling_network,lr_network = lr_network, sig_network = sig_network, gr_network = gr_network)
+head(data_source_network)
+
+# export to cytoscape
+output_path = ""
+write_output = TRUE # change to TRUE for writing output
+
+# weighted networks ('import network' in Cytoscape)
+if(write_output){
+  bind_rows(active_signaling_network$sig %>% mutate(layer = "signaling"), active_signaling_network$gr %>% mutate(layer = "regulatory")) %>% write_tsv(paste0(output_path,"weighted_signaling_network.txt")) 
+}
+
+# networks with information of supporting data sources ('import network' in Cytoscape)
+if(write_output){
+data_source_network %>% write_tsv(paste0(output_path,"data_source_network.txt"))
+}
+
+# Node annotation table ('import table' in Cytoscape)
+specific_annotation_tbl = bind_rows(
+  tibble(gene = ligands_all, annotation = "ligand"),
+  tibble(gene = targets_all, annotation = "target"),
+  tibble(gene = c(data_source_network$from, data_source_network$to) %>% unique() %>% setdiff(c(targets_all,ligands_all)) %>% intersect(lr_network$to %>% unique()), annotation = "receptor"),
+  tibble(gene = c(data_source_network$from, data_source_network$to) %>% unique() %>% setdiff(c(targets_all,ligands_all)) %>% intersect(gr_network$from %>% unique()) %>% setdiff(c(data_source_network$from, data_source_network$to) %>% unique() %>% intersect(lr_network$to %>% unique())),annotation = "transcriptional regulator")
+)
+non_specific_annotation_tbl = tibble(gene = c(data_source_network$from, data_source_network$to) %>% unique() %>% setdiff(specific_annotation_tbl$gene), annotation = "signaling mediator")
+
+if(write_output){
+bind_rows(specific_annotation_tbl,non_specific_annotation_tbl) %>% write_tsv(paste0(output_path,"annotation_table.txt"))
+}
+# or this
+wt<- read.table("weighted_signaling_network.txt")
+wt<- cbind(wt$V1, wt$V4, wt$V2)
+wt<- wt[-1,]
+write.table(wt, "nichenetIL4.sif", sep="\t", row.names = F, quote = F)
+```
+
+```{r}
+# expression of target genes in receiver samples w normal stroma vs KO stroma
+WTstroma_CLLreciever<- cll_exp[geneset_oi,]
+#write.table(active_ligand_target_links_df, "WT_altldf.txt", sep="\t")
+# DE analysis between WT and KO results: overlap of ligand-target pairs 
+WT<- read.table("WT_altldf.txt")
+KO<- read.table("KO_altldf.txt")
+
+length(which(WT$target %in% KO$target))
+# 71/86 WT ligands also in KO ligands -- 15 unique WT and 23 unique KO
+length(which(KO$target %in% WT$target))
+
+KO_t<- unique(KO$target)
+WT_t<-unique(WT$target)
+length(which(WT_t %in% KO_t))
+
+KO_l<- unique(KO$ligand)
+WT_l <- unique(WT$ligand)
+length(which(WT_l %in% KO_l))
+#Which?
+`%notin%` <- Negate(`%in%`)
+WT_l[which(WT_l %notin% KO_l)]
+KO_l[which(KO_l %notin% WT_l)]
+
+# for table
+unique(WT[which(WT$ligand %notin% KO$ligand),])
+```
+

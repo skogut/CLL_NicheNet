@@ -1,0 +1,336 @@
+---
+title: "heatmap nichenet"
+author: "Sophie Kogut"
+date: "6/24/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+Heatmap of Expression
+
+```{r load}
+library(data.table)
+library(dplyr)
+library(edgeR)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+```{r load data}
+# read in CLL data
+setwd("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab")
+cll_exp<- read.table("CLL/cll_rawcounts.matrix.txt", sep= "\t")
+colnames(cll_exp) <- cll_exp[1,]
+rownames(cll_exp) <- cll_exp[,1]
+cll_exp<- cll_exp[-1,-1]
+cll_exp<- data.matrix(cll_exp, rownames.force = NA)
+
+# read in stroma data
+stroma_exp<- read.table("CLL/stroma_rawcounts.matrix.txt", sep= "\t")
+colnames(stroma_exp) <- stroma_exp[1,]
+which(stroma_exp[,1] == "SETD1A")
+stroma_exp<- stroma_exp[-45450,]
+row.names(stroma_exp)<- toupper(stroma_exp[,1])
+stroma_exp<- stroma_exp[-1,-1]
+stroma_exp<- data.matrix(stroma_exp, rownames.force = NA)
+```
+
+#################################################################################
+Only load from one geneset at a time!
+```{r load TGFB}
+temp = list.files("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/REACTOME_SIGNALING_BY_TGFB_FAMILY_MEMBERS/")
+temp
+temp<- temp[c(4,7,9,13)]
+setwd("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/REACTOME_SIGNALING_BY_TGFB_FAMILY_MEMBERS")
+named.list <- lapply(temp, read.csv)
+
+
+for(i in 1:4){
+  named.list[[i]]$X<- paste(temp[i])
+   named.list[[i]]$X<- gsub("REACTOME_SIGNALING_BY_TGFB_FAMILY_MEMBERS_", "",  named.list[[i]]$X)
+   named.list[[i]]$X<- gsub(".csv", "",  named.list[[i]]$X)
+}
+
+files.matrix <-rbindlist(named.list)
+
+
+lgr<- files.matrix
+lgr$l_t<- paste0(lgr$ligand, ":", lgr$target)
+
+# values are the same
+```
+
+```{r load PDGF}
+temp = list.files("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/PDGF_signaling/")
+temp
+# select csv
+temp<- temp[c(2,4,6,8)]
+setwd("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/PDGF_signaling")
+named.list <- lapply(temp, read.csv)
+
+
+for(i in 1:4){
+  named.list[[i]]$X<- paste(temp[i])
+   named.list[[i]]$X<- gsub(".csv", "",  named.list[[i]]$X)
+}
+
+files.matrix <-rbindlist(named.list, fill=TRUE)
+
+
+lgr<- files.matrix
+#lgr$l_t<- paste0(lgr$ligand, ":", lgr$target)
+
+```
+
+```{r load ECM}
+temp = list.files("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/ECM_KEGG_genes/")
+temp
+# select csv
+temp<- temp[c(3,7,11,15)]
+setwd("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/ECM_KEGG_genes")
+named.list <- lapply(temp, read.csv)
+
+
+for(i in 1:4){
+  named.list[[i]]$X<- paste(temp[i])
+   named.list[[i]]$X<- gsub(".csv", "",  named.list[[i]]$X)
+}
+
+files.matrix <-rbindlist(named.list, fill=TRUE)
+
+
+lgr<- files.matrix
+#lgr$l_t<- paste0(lgr$ligand, ":", lgr$target)
+
+```
+
+############################################################################
+
+```{r heatmap of counts}
+# expresssed ligands in stromal sender cells
+counts<- stroma_exp
+unique_ligand<- unique(lgr$ligand)
+# normalize 
+y <- DGEList(counts=counts)
+y <- calcNormFactors(y)
+
+#normalize data
+cpm <- cpm(y)
+#cpm<- t(cpm)
+#write.csv(cpm, "IK1_cpm.csv")
+lcpm <- cpm(y, log=TRUE) 
+#write.csv(counts, "stroma_cpm.csv")
+filtered <- lcpm[intersect(row.names(lcpm), as.character(unique_ligand)),]
+
+breaksList = seq(-1.5, 1.5, by = 0.25)
+
+out <- pheatmap(filtered, scale = "row", cluster_rows = TRUE, cutree_rows = 5, cluster_cols = TRUE,  breaks=breaksList, main = "ECM ligand expression in stroma", color = colorRampPalette(brewer.pal(n = 7, name = "RdBu"))(length(breaksList)))
+
+#-------------------------------------------------------------------------------
+# expressed targets in CLL samples
+counts<- cll_exp
+colnames(counts)<- gsub("Patient\\d+_", "", colnames(counts))
+unique_target<- unique(lgr$target)
+# normalize 
+y <- DGEList(counts=counts)
+
+y <- calcNormFactors(y)
+
+#normalize data
+cpm <- cpm(y)
+#cpm<- t(cpm)
+#write.csv(cpm, "IK1_cpm.csv")
+lcpm <- cpm(y, log=TRUE) 
+#write.csv(counts, "CLL_cpm.csv")
+filtered <- lcpm[intersect(row.names(lcpm), as.character(unique_target)),]
+
+out <- pheatmap(filtered, scale = "row", cluster_rows = TRUE, cutree_rows = 5, cluster_cols = TRUE,  breaks=breaksList, main = "ECM target expression in CLL cells", color = colorRampPalette(brewer.pal(n = 7, name = "RdBu"))(length(breaksList)))
+```
+
+Heatmap of ligand activity
+
+#################################################################################
+```{r load TGBF}
+temp = list.files("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/REACTOME_SIGNALING_BY_TGFB_FAMILY_MEMBERS/")
+temp<- temp[grep("\\w+_ligand_activites.csv", temp)]
+setwd("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/REACTOME_SIGNALING_BY_TGFB_FAMILY_MEMBERS")
+named.list <- lapply(temp, read.csv)
+
+
+for(i in 1:4){
+  named.list[[i]]$X<- paste(temp[i])
+   named.list[[i]]$X<- gsub("REACTOME_SIGNALING_BY_TGFB_FAMILY_MEMBERS_", "",  named.list[[i]]$X)
+   named.list[[i]]$X<- gsub(".csv", "",  named.list[[i]]$X)
+}
+
+files.matrix <-rbindlist(named.list)
+
+
+lgr<- files.matrix
+
+uniq<- unique(lgr$test_ligand)
+
+```
+
+```{r load pdgf}
+temp = list.files("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/PDGF_signaling/")
+temp<- temp[grep("\\w+_ligand_activites.csv", temp)]
+setwd("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/PDGF_signaling")
+named.list <- lapply(temp, read.csv)
+
+
+for(i in 1:4){
+  named.list[[i]]$X<- paste(temp[i])
+   named.list[[i]]$X<- gsub(".csv", "",  named.list[[i]]$X)
+}
+
+files.matrix <-rbindlist(named.list, fill=TRUE)
+
+
+lgr<- files.matrix
+uniq<- unique(lgr$test_ligand)
+```
+
+```{r load ECM}
+temp = list.files("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/ECM_KEGG_genes/")
+temp
+# select csv
+temp<- temp[grep("\\w+_ligand_activites.csv", temp)]
+setwd("/Users/skogut/Desktop/Frietze_Lab/FrietzeLab/CLL/ECM_KEGG_genes")
+named.list <- lapply(temp, read.csv)
+
+
+for(i in 1:4){
+  named.list[[i]]$X<- paste(temp[i])
+   named.list[[i]]$X<- gsub(".csv", "",  named.list[[i]]$X)
+}
+
+files.matrix <-rbindlist(named.list, fill=TRUE)
+
+
+lgr<- files.matrix
+uniq<- unique(lgr$test_ligand)
+
+```
+##################################################################################
+
+```{r build matrix for heatmap}
+lgr<- data.frame(matrix(nrow = length(uniq), ncol = 4))
+row.names(lgr)<- uniq
+colnames(lgr)<- c("KO_untreated_ligand_activites", "KO_Venetoclax_ligand_activites", "WT_untreated_ligand_activites", "WT_Venetoclax_ligand_activites")
+
+KO_untreated_ligand_activites <- data.frame(named.list[[1]][,c(2,5)])
+
+for(i in row.names(lgr)){
+  if( i %in% KO_untreated_ligand_activites$test_ligand){
+    lgr[which(row.names(lgr)== i),1]<- KO_untreated_ligand_activites$pearson[which(KO_untreated_ligand_activites$test_ligand == i)]
+  }
+  else{
+    lgr[which(row.names(lgr)== i),1]<- 0
+  }
+}
+
+
+KO_Venetoclax_ligand_activites<- data.frame(named.list[[2]][,c(2,5)])
+for(i in row.names(lgr)){
+  if( i %in% KO_Venetoclax_ligand_activites$test_ligand){
+    lgr[which(row.names(lgr)== i),2]<- KO_Venetoclax_ligand_activites$pearson[which(KO_Venetoclax_ligand_activites$test_ligand == i)]
+  }
+  else{
+    lgr[which(row.names(lgr)== i),2]<- 0
+  }
+}
+
+
+WT_untreated_ligand_activites<- data.frame(named.list[[3]][,c(2,5)])
+
+for(i in row.names(lgr)){
+  if( i %in% WT_untreated_ligand_activites$test_ligand){
+    lgr[which(row.names(lgr)== i),3]<- WT_untreated_ligand_activites$pearson[which(WT_untreated_ligand_activites$test_ligand == i)]
+  }
+  else{
+    lgr[which(row.names(lgr)== i),3]<- 0
+  }
+}
+
+WT_Venetoclax_ligand_activites<- data.frame(named.list[[4]][,c(2,5)])
+for(i in row.names(lgr)){
+  if( i %in% WT_Venetoclax_ligand_activites$test_ligand){
+    lgr[which(row.names(lgr)== i),4]<- WT_Venetoclax_ligand_activites$pearson[which(WT_Venetoclax_ligand_activites$test_ligand == i)]
+  }
+  else{
+    lgr[which(row.names(lgr)== i),4]<- 0
+  }
+}
+
+#check
+print(lgr[400,])
+files.matrix[which(files.matrix$test_ligand == "NRXN1"),]
+```
+
+```{r Ligand Activity score heatmap}
+# expresssed ligands in stromal sender cells
+colnames(lgr)<- gsub("_ligand_activites", "", colnames(lgr))
+
+out <- pheatmap(lgr, scale = "none", cluster_rows = TRUE,  cutree_rows = 6, cluster_cols = TRUE,   main = "ECM Ligand Activity scores", color = colorRampPalette(c("gray80", "red"))(50), show_rownames = F) 
+#write.csv(lgr, "PDGF_ligand_activity_scores.csv")
+
+
+# CLuster genes
+out <- pheatmap(lgr, scale = "none", cluster_rows = TRUE,  cutree_rows = 6, kmeans= 6, cluster_cols = TRUE,   main = "PDGF Family Ligand Activity scores", color = colorRampPalette(c("gray80", "red"))(50), show_rownames = F) 
+
+# saving clustered output
+geneclusters <- out[["kmeans"]][["cluster"]]
+
+# get cluster1 genes
+cl1 <- geneclusters[geneclusters==1]
+cl1 <- as.data.frame(cl1)
+colnames(cl1)<- "cluster"
+cluster1 <- row.names(cl1)
+head(cluster1)
+
+#get cluster2 genes
+cl2 <- geneclusters[geneclusters==2]
+cl2 <- as.data.frame(cl2)
+colnames(cl2)<- "cluster"
+cluster2 <- row.names(cl2)
+head(cluster2)
+
+#get cluster3 genes
+cl3 <- geneclusters[geneclusters==3]
+cl3 <- as.data.frame(cl3)
+colnames(cl3)<- "cluster"
+cluster3 <- row.names(cl3)
+head(cluster3)
+
+#get cluster4 genes
+cl4 <- geneclusters[geneclusters==4]
+cl4 <- as.data.frame(cl4)
+colnames(cl4)<- "cluster"
+cluster4 <- row.names(cl4)
+head(cluster4)
+#get cluster5 genes
+cl5 <- geneclusters[geneclusters==5]
+cl5 <- as.data.frame(cl5)
+colnames(cl5)<- "cluster"
+cluster5 <- row.names(cl5)
+head(cluster5)
+
+#get cluster6 genes
+cl6 <- geneclusters[geneclusters==6]
+cl6 <- as.data.frame(cl6)
+colnames(cl6)<- "cluster"
+cluster6 <- row.names(cl6)
+head(cluster6)
+
+#make datatable of all cluster genes to easily pull a cluster for pathway
+clusters <- as.data.table(geneclusters)
+clusters %>% group_by(geneclusters) %>% summarise(n())
+#or 
+clusters<- rbind(cl1,cl2,cl3,cl4,cl5,cl6)
+
+# merge w lgr
+
+clustered_output<- merge(clusters, lgr, by="row.names")
+#write.csv(clustered_output, "ligand_activity_scores_ECM.csv")
+```
