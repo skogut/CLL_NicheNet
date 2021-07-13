@@ -15,6 +15,9 @@ library(edgeR)
 library(dplyr)
 library(fgsea)
 library(data.table)
+library(RColorBrewer)
+library(cowplot)
+library(ggpubr)
 
 # load NicheNet’s ligand-target prior model 
 ligand_target_matrix =  readRDS(url("https://zenodo.org/record/3260758/files/ligand_target_matrix.rds"))
@@ -228,7 +231,7 @@ p_hist_lig_activity
 ligand_activities<- ligand_activities %>% arrange(-pearson) 
 file<- paste("CLL/",gset_name, "/",gset_name, "_", group_name)
 file<- gsub(" ", "", file)
-write.csv(ligand_activities, file = paste0(file,"_ligand_activites.csv"))
+#write.csv(ligand_activities, file = paste0(file,"_ligand_activites.csv"))
 ```
 
 ```{r step 5}
@@ -249,7 +252,7 @@ nrow(active_ligand_target_links_df)
 # save #######################################################################
 file<- paste("CLL/",gset_name, "/",gset_name, "_", group_name)
 file<- gsub(" ", "", file)
-write.csv(active_ligand_target_links_df, file = paste0(file,".csv"))
+#write.csv(active_ligand_target_links_df, file = paste0(file,".csv"))
 #############################################################################
 
 order_ligands = intersect(best_upstream_ligands, colnames(active_ligand_target_links)) %>% rev()
@@ -257,10 +260,10 @@ order_targets = active_ligand_target_links_df$target %>% unique()
 vis_ligand_target = active_ligand_target_links[,order_ligands]  %>% t()# order_targets
 
 # CHANGE AXES LABELS
-p_ligand_target_network = vis_ligand_target %>% make_heatmap_ggplot("Prioritized stromal-ligands","ECM signaling  genes in CLL cells", color = "purple",legend_position = "top", x_axis_position = "top",legend_title = "Regulatory potential") + scale_fill_gradient2(low = "whitesmoke",  high = "purple", breaks = c(0,0.005,0.01)) + theme(axis.text.x = element_text(face = "italic"))
+p_ligand_target_network = vis_ligand_target %>% make_heatmap_ggplot("Prioritized stromal-ligands","TGFB family signaling  genes in CLL cells", color = "purple",legend_position = "top", x_axis_position = "top",legend_title = "Regulatory potential") + scale_fill_gradient2(low = "whitesmoke",  high = "purple", breaks = c(0,0.005,0.01)) + theme(axis.text.x = element_text(face = "italic"))
 
 p_ligand_target_network
-ggsave(paste0(file), plot= p_ligand_target_network, device = "pdf")
+#ggsave(paste0(file), plot= p_ligand_target_network, device = "pdf")
 ```
 
 #############################################################################
@@ -300,10 +303,42 @@ p_ligand_receptor_network
 # save #######################################################################
 file<- paste("CLL/",gset_name, "/",gset_name, "_", group_name)
 file<- gsub(" ", "", file)
-write.csv(vis_ligand_receptor_network, file = paste0(file,"ligand_receptor_network.csv"))
+#write.csv(vis_ligand_receptor_network, file = paste0(file,"ligand_receptor_network.csv"))
 #############################################################################
 
 ```
+
+```{r ligand activity  plus heatmap}
+
+ligand_pearson_matrix = ligand_activities %>% select(pearson) %>% as.matrix() %>% magrittr::set_rownames(ligand_activities$test_ligand)
+
+vis_ligand_pearson = ligand_pearson_matrix[order_ligands, ] %>% as.matrix(ncol = 1) %>% magrittr::set_colnames("Pearson")
+
+p_ligand_pearson = vis_ligand_pearson %>% make_heatmap_ggplot("Prioritized ligands","Ligand activity", color = "darkorange",legend_position = "top", x_axis_position = "top", legend_title = "Pearson correlation coefficient\ntarget gene prediction ability)")
+p_ligand_pearson
+
+
+figures_without_legend = plot_grid(
+  p_ligand_pearson + theme(legend.position = "none", axis.ticks = element_blank()) + theme(axis.title.x = element_text()),
+  p_ligand_target_network + theme(legend.position = "none", axis.ticks = element_blank()) + ylab(""), 
+  rel_widths = c(ncol(vis_ligand_pearson)+ 10, ncol(vis_ligand_target)),
+  align = "h",
+  ncol = 2)
+
+legends = plot_grid(
+  as_ggplot(get_legend(p_ligand_pearson)),
+  as_ggplot(get_legend(p_ligand_target_network)),
+  nrow = 1,
+  align = "h")
+
+la_hm<- plot_grid(figures_without_legend, 
+          legends, rel_heights = c(10,1), nrow = 2, align = "hv")
+la_hm
+file<- paste("TGFB_", group_name, "LA_HM")
+file<- gsub(" ", "", file)
+ggsave(paste0(file), plot= la_hm,  width = 10.6, height=8, units= "in", device = "pdf")
+```
+
 
 ```{r}
 # Inferring ligand-to-target signaling paths
